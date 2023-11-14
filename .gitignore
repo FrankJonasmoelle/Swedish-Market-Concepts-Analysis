@@ -1,7 +1,11 @@
 corpus/
-myenv/
+marketenv/
+preprocessed/
+preprocessed_raw/
+preprocessed_filtered/
 *.ipynb
 *.txt
+.DS_Store
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

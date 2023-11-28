@@ -1,0 +1,3 @@
+# Market concepts in Scandinavian political debate: contribution to the history of neoliberalism in the Nordics
+
+This project aims to investigate the changing meaning of the idea of the market in the Swedish political discourse from 1971-2000. The goal of the project is to apply natural language processing methods on parliamentary text data from the SWERIK project to analyze how the perceptions of the market have changed. 

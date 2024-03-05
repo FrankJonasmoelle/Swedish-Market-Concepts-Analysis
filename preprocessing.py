@@ -1,6 +1,7 @@
 from lxml import etree
 from pyriksdagen.utils import protocol_iterators
 from concurrent.futures import ProcessPoolExecutor
+import pandas as pd
 import nltk    
 import spacy
 import re
@@ -20,14 +21,28 @@ def parse_protocol(protocol):
     root = etree.parse(protocol, parser).getroot()
     return root
 
-def parse_speeches(protocol):
+party_affiliation = pd.read_csv("corpus/metadata/party_affiliation.csv")
+def parse_speeches(protocol, parties=["Socialdemokraterna"]):
     """In comparison to parse_protocol, this function returns only the speeches (defined by <u> tags)"""
     parser = etree.XMLParser(remove_blank_text=True)
     root = etree.parse(protocol, parser).getroot()
     u_texts = root.findall(".//{http://www.tei-c.org/ns/1.0}u")
     ls_u_texts = []
     for u_tag in u_texts:
-        ls_u_texts.append(" ".join(u_tag.itertext()))
+        speaker_id = u_tag.get("who") 
+        if parties is None:
+           ls_u_texts.append(" ".join(u_tag.itertext())) 
+        else:
+            # get speaker party
+            try:
+                speaker_party = list(party_affiliation[party_affiliation["wiki_id"] == speaker_id]["party"])[0]
+            except Exception as e:
+                print(e)
+                continue
+            # filter by speaker party
+            if speaker_party in parties:
+                ls_u_texts.append(" ".join(u_tag.itertext()))
+    # filter u tags that have parties ... in it
     return ls_u_texts
 
 def get_protocol_year(protocol):
@@ -81,7 +96,8 @@ def preprocess(ls):
     ls = remove_letters(ls)
     return ls
 
-def lemmatize_helper(input_directory, output_directory, file, nlp):
+nlp = spacy.load("sv_core_news_sm", disable=['ner', 'parser', 'textcat'])
+def lemmatize_helper(input_directory, output_directory, file):
     input_file_path = os.path.join(input_directory, file)
     output_file_path = os.path.join(output_directory, file)
 
@@ -90,14 +106,14 @@ def lemmatize_helper(input_directory, output_directory, file, nlp):
             text = f.read()
             doc = nlp(text)
             lemmatized_text = [item.lemma_ for item in doc]
+        lemmatized_text = ["konkurrens" if word == "konkurr" else word for word in lemmatized_text]
         with open(output_file_path, "w", encoding="utf-8") as f:
             for item in lemmatized_text:
                 f.write(item + " ")
     else:
         print("file was already lemmatized")
-
+            
 def postprocess_lemmatize(input_directory, output_directory):
-    nlp = spacy.load("sv_core_news_sm", disable=['ner', 'parser', 'textcat'])
     with ProcessPoolExecutor() as executor:
         futures = []
         for root, dirs, files in os.walk(input_directory):
@@ -107,7 +123,7 @@ def postprocess_lemmatize(input_directory, output_directory):
                     input_dir = root 
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
-                    future = executor.submit(lemmatize_helper, input_dir, output_dir, file, nlp)
+                    future = executor.submit(lemmatize_helper, input_dir, output_dir, file)
                     futures.append(future)
             # Wait for all tasks to complete
             for future in futures:
@@ -146,27 +162,20 @@ def postprocess_filter(input_directory, output_directory):
         for future in futures:
             future.result()
 
-def run_raw(start_date=1971, end_date=2010, foldername="preprocessed_raw"):
+def run_raw(start_date=1971, end_date=2010, foldername="preprocessed_raw", include_parties=["Socialdemokraterna"]):
     """preprocesses the data by only stripping white space and tokenizing the words using *preprocess_raw*"""
     protocols = get_protocols(start_date, end_date)
     for protocol in protocols:
-        #  protocol_year = protocol.split("/")[2] # extract year from file path
         protocol_filename = protocol.split("/")[3] # extract file name
         year = get_protocol_year(protocol)
-        if 1971 <= int(year) <= 1980:
-            folder_year = "1970s"    
-        elif 1981 <= int(year) <= 1990:
-            folder_year = "1980s"
-        elif 1991 <= int(year) <= 2000:
-            folder_year = "1990s"
-        elif 2001 <= int(year) <= 2010:
-            folder_year = "2000s"
+        folder_year = str(year)
+
         if not os.path.exists(foldername+"/"+folder_year):
             os.makedirs(foldername+"/"+folder_year)
 
         filepath = f"{foldername}/{folder_year}/preprocessed_{year}_{protocol_filename}.txt"
         if not os.path.exists(filepath):
-            speech_ls = parse_speeches(protocol)
+            speech_ls = parse_speeches(protocol, include_parties)
             text = preprocess_raw(speech_ls)
             count = 1
             with open(filepath, "w", encoding="utf-8") as file:
@@ -181,28 +190,20 @@ def run_raw(start_date=1971, end_date=2010, foldername="preprocessed_raw"):
         else:
             print("file already exists")
 
-def run_main(start_date=1971, end_date=2010, foldername="preprocessed"):
+def run_main(start_date=1971, end_date=2010, foldername="preprocessed", include_parties=["Socialdemokraterna"]):
     """preprocesses the data the standard way"""
     protocols = get_protocols(start_date, end_date)
     for protocol in protocols:
-        #protocol_year = protocol.split("/")[2] # extract year from file path
         protocol_filename = protocol.split("/")[3] # extract file name
 
         year = get_protocol_year(protocol)
-        if 1971 <= int(year) <= 1980:
-            folder_year = "1970s"    
-        elif 1981 <= int(year) <= 1990:
-            folder_year = "1980s"
-        elif 1991 <= int(year) <= 2000:
-            folder_year = "1990s"
-        elif 2001 <= int(year) <= 2010:
-            folder_year = "2000s"
+        folder_year = str(year)
         if not os.path.exists(foldername+"/"+folder_year):
             os.makedirs(foldername+"/"+folder_year)
 
         filepath = f"{foldername}/{folder_year}/preprocessed_{year}_{protocol_filename}.txt"
         if not os.path.exists(filepath):
-            speech_ls = parse_speeches(protocol)
+            speech_ls = parse_speeches(protocol, include_parties)
             text = preprocess(speech_ls)
             count = 1
             with open(filepath, "w", encoding="utf-8") as file:
@@ -220,9 +221,14 @@ def run_main(start_date=1971, end_date=2010, foldername="preprocessed"):
 if __name__=="__main__": 
     start_date = 1971
     end_date = 2010
-    #run_raw(start_date, end_date, "preprocessed_raw")
-    #run_main(start_date, end_date, "preprocessed/")
-    # print("started lemmatizing")
+    #run_raw(start_date, end_date, "preprocessed_raw/", include_parties=None)
+    #run_main(start_date, end_date, "preprocessed/", include_parties=None)
     # postprocess_lemmatize("preprocessed/", "preprocessed_lemmatized/")
-    # print("started filtering")
-    postprocess_filter("preprocessed_lemmatized/", "preprocessed_filtered/")
+    # postprocess_filter("preprocessed_lemmatized/", "preprocessed_filtered/")
+
+    run_raw(start_date, end_date, "preprocessed_raw_folkpartiet/", include_parties=["Folkpartiet", "Liberalerna"])
+    run_main(start_date, end_date, "preprocessed_folkpartiet/", include_parties=["Folkpartiet", "Liberalerna"])
+    print("started lemmatizing")
+    postprocess_lemmatize("preprocessed_folkpartiet/", "preprocessed_lemmatized_folkpartiet/")
+    print("started filtering")
+    postprocess_filter("preprocessed_lemmatized_folkpartiet/", "preprocessed_filtered_folkpartiet/")
